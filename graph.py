@@ -18,7 +18,8 @@ class Graph(object):
                 , initializer=lambda: 0
                 , loss=tf.losses.mean_squared_error
                 , optimizer=tf.train.GradientDescentOptimizer(0.01)
-                , logdir="./summaries"):
+                , logdir="./summaries"
+                , summarize=True):
         
 
         ####################################################################
@@ -54,6 +55,7 @@ class Graph(object):
         #               #
         #################
 
+        self.summarize   = summarize
         self.summaries   =  tf.contrib.summary.create_file_writer(logdir)
         self.summaries.set_as_default()
 
@@ -69,16 +71,18 @@ class Graph(object):
 
         self.initialize()
 
-        self.summarize()
-
-    def summarize(self):
+    def summarize_graph(self, **kwargs):
         with tf.contrib.summary.record_summaries_every_n_global_steps(1):
+            if "loss" in kwargs:
+                tf.contrib.summary.scalar("loss", kwargs[loss])
 
-            for variable in self.trainable_variables:
-                name = "/".join(variable.name.split("/")[0:2])
-                
-                print(name)
-                tf.contrib.summary.scalar(name, variable)
+
+
+
+
+                # for variable in self.trainable_variables:
+                    # name = "/".join(variable.name.split("/")[0:2])
+                    # tf.contrib.summary.scalar(name, variable)
 
         self.global_step.assign_add(1)
 
@@ -107,7 +111,28 @@ class Graph(object):
 
         return None
 
-    def __call__(self, inputs):
+    def train(self, X, Y):
+        loss = 0
+        for x, y in zip(X, Y):
+            loss += self.train_single(inputs, labels)
+
+        loss = loss / len(X)
+
+        if self.summarize:
+            self.summarize_graph(loss=loss)
+
+        return self
+
+    def predict(self, X):
+        batch, inputs = X.shape
+
+        output = np.zeros((batch, self.outputs))
+        for i, x in enumerate(X):
+            output[i] = self.predict_single(x)
+
+        return output
+
+    def predict_single(self, inputs):
         for I, N in zip(inputs, self.input_nodes):
             N.surge(tf.constant(I))
 
@@ -118,15 +143,16 @@ class Graph(object):
         output = []
         for i, node in enumerate(self.output_nodes):
             output.append(node.activity)
-            
-            """Reset Node."""
+
+        """Cool down nodes."""
+        for node in self.nodes:
             node.cool()
 
         return output
 
-    def train_single_cycle( self
-                          , inputs
-                          , labels):
+    def train_single( self
+                    , inputs
+                    , labels):
 
         """
         Train on one cycle.
@@ -135,7 +161,7 @@ class Graph(object):
 
         with tfe.GradientTape(persistent=True) as gradients:
             """Surge network."""
-            outputs = self(inputs)
+            outputs = self.predict_single(inputs)
             loss = self.loss(labels.reshape(-1, 1), outputs)
 
         var_grads = gradients.gradient(loss, self.trainable_variables)
@@ -144,12 +170,9 @@ class Graph(object):
         var_grads = [grad if grad is not None else tf.constant([0], dtype=tf.float32)
                         for grad in var_grads]
 
-        
         """Avoid Exploding Gradients."""
-        var_grads = tf.clip_by_value(var_grads, -100, 100)
+        var_grads = tf.clip_by_value(var_grads, -10, 10)
         self.optimizer.apply_gradients(zip(var_grads, self.trainable_variables))
-
-        self.summarize()
 
         return loss
 
@@ -159,14 +182,14 @@ if __name__ == "__main__":
     tf.enable_eager_execution()
     g = Graph( 5, 5
              , size=50
-             , surges=4
-             , c_dist=lambda: 1)
+             , surges=4)
 
     inputs  = np.array([1, 2, 3, 4, 5], dtype=np.float32)
     outputs = np.array([1, 0, -1, -2, -3], dtype=np.float32)
 
     for _ in range(100):
-        print("Loss", g.train_single_cycle(inputs, outputs))
+        print("Loss", g.train_single(inputs, outputs))
+
 
     # ts = time.time()
     # print(g(inputs))
