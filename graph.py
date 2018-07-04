@@ -3,23 +3,26 @@ import tensorflow as tf
 import tensorflow.contrib.eager as tfe
 import time
 from node import Node
+from vizgraph import VizGraph
 
 
-class Graph(object):
+class Graph(VizGraph):
 
     def __init__( self
                 , inputs
                 , outputs
                 , size=10
-                , sleep_update=0.05
+                , sleep_update=0.1
                 , surges=10
                 , c_dist=lambda: np.random.normal(8, 2)
-                , activation=tf.nn.tanh
+                , activation=tf.nn.relu
+                , output_activation=tf.nn.relu 
                 , initializer=lambda: 0
                 , loss=tf.losses.mean_squared_error
                 , optimizer=tf.train.GradientDescentOptimizer(0.01)
                 , logdir="./summaries"
-                , summarize=True):
+                , summarize=True
+                , visualize=True):
         
 
         ####################################################################
@@ -28,26 +31,28 @@ class Graph(object):
         # Size: number of nodes in the graph                               #
         # Sleep Update: Number of Edges Updated Every Sleep Cycle          #
         # Surges: Number of surges through the network                     #
-        # c_dist: distribution of connections per node   #
+        # c_dist: distribution of connections per node                     #    
         # activation: activation function for each connection of each node #
+        # output_activation: activation for final outputs                  #
         # initializer: activity initializer for each node                  #
         # popularities: How popular it is to connect to that node          #
         # nodes: All the nodes in the graph                                #
         # trainable_variables: variables that is trained                   #
         # loss: Loss used to evaluate result                               #
         # Optimizer: Function to minimize the loss                         #
-        # Logdir: Directory to store summaries
+        # Logdir: Directory to store summaries                             #
         ####################################################################
 
-        self.inputs      = inputs
-        self.outputs     = outputs
-        self.size        = size
-        self.surges      = surges
-        self.cd          = c_dist
-        self.activation  = activation
-        self.initializer = initializer
-        self.loss        = loss
-        self.optimizer   = optimizer
+        self.inputs       = inputs
+        self.outputs      = outputs
+        self.size         = size
+        self.sleep_update = sleep_update
+        self.surges       = surges
+        self.cd           = c_dist
+        self.activation   = activation
+        self.initializer  = initializer
+        self.loss         = loss
+        self.optimizer    = optimizer
 
         #################
         #               #
@@ -69,24 +74,36 @@ class Graph(object):
         self.nodes               = [None] * self.size
         self.trainable_variables = []
 
-        self.initialize()
+        self.__initialize()
 
-    def summarize_graph(self, **kwargs):
+        self.visualize = visualize
+        if self.visualize:
+            VizGraph.__init__( self
+                             , self.trainable_variables
+                             , self.nodes
+                             , self.input_nodes
+                             , self.output_nodes)
+
+            self.draw()
+
+    def __summarize_graph(self, **kwargs):
         with tf.contrib.summary.record_summaries_every_n_global_steps(1):
-            if "loss" in kwargs:
-                tf.contrib.summary.scalar("loss", kwargs[loss])
 
+            ######################################
+            #            Wierd Bug!              #
+            # Adding Summary Once Does not Work  #
+            # Adding Summar Twice Does the Trick #
+            ######################################
+            for _ in range(2):
+                tf.contrib.summary.scalar("loss", kwargs["loss"])
 
-
-
-
-                # for variable in self.trainable_variables:
-                    # name = "/".join(variable.name.split("/")[0:2])
-                    # tf.contrib.summary.scalar(name, variable)
+            # for variable in self.trainable_variables:
+                # tf.contrib.summary.scalar(str(kwargs["loss"]), kwargs["loss"])
+                # tf.contrib.summary.scalar(name, variable)
 
         self.global_step.assign_add(1)
 
-    def initialize(self):
+    def __initialize(self):
         for i in range(self.size):
             c             = int(abs(self.cd()))
             self.nodes[i] = Node( i
@@ -111,58 +128,68 @@ class Graph(object):
 
         return None
 
-    def train(self, X, Y):
-        loss = 0
-        for x, y in zip(X, Y):
-            loss += self.train_single(inputs, labels)
+    def __predict(self, inputs):
+        assert 2 == len(inputs.shape)
 
-        loss = loss / len(X)
+        batch_dim, input_dim = inputs.shape
 
-        if self.summarize:
-            self.summarize_graph(loss=loss)
+        assert input_dim == len(self.input_nodes)
 
-        return self
+        #############################################
+        # Initialize all nodes to vectorized dim    #
+        # Otherwise will be problematic when taking #
+        # Gradients                                 #
+        #############################################
 
-    def predict(self, X):
-        batch, inputs = X.shape
+        for node in self.nodes:
+            node.set(tf.constant(
+                np.array([self.initializer()] * batch_dim), 
+                    dtype=tf.float32))
 
-        output = np.zeros((batch, self.outputs))
-        for i, x in enumerate(X):
-            output[i] = self.predict_single(x)
 
-        return output
+        ####################
+        # Vectorize Inputs #
+        ####################
+        vector = inputs.T
 
-    def predict_single(self, inputs):
-        for I, N in zip(inputs, self.input_nodes):
-            N.surge(tf.constant(I))
+        for i in range(input_dim):
+            self.input_nodes[i]\
+                .set(tf.constant(vector[i], dtype=tf.float32))
+
 
         for _ in range(self.surges):
             for node in self.nodes:
                 node()
 
-        output = []
-        for i, node in enumerate(self.output_nodes):
-            output.append(node.activity)
+        output = list(
+                    map(lambda node: self.output_activation(node.activity)
+                        , self.output_nodes))
 
-        """Cool down nodes."""
         for node in self.nodes:
             node.cool()
 
         return output
 
-    def train_single( self
-                    , inputs
-                    , labels):
+    def predict(self, inputs):
+        outputs = self.__predict(inputs)
+        outputs = tf.stack(outputs)
+        outputs = tf.transpose(outputs)
 
-        """
-        Train on one cycle.
-        Not sure how to incorporate batched training yet.
-        """
+        return np.array(outputs)
+
+    def train( self
+             , inputs
+             , labels):
+
+        assert 2 == len(inputs.shape)
+        assert 2 == len(labels.shape)
 
         with tfe.GradientTape(persistent=True) as gradients:
-            """Surge network."""
-            outputs = self.predict_single(inputs)
-            loss = self.loss(labels.reshape(-1, 1), outputs)
+            """Surge through network."""
+            outputs = self.__predict(inputs)
+            outputs = tf.stack(outputs)
+            outputs = tf.transpose(outputs)
+            loss = self.loss(labels, outputs)
 
         var_grads = gradients.gradient(loss, self.trainable_variables)
 
@@ -174,26 +201,65 @@ class Graph(object):
         var_grads = tf.clip_by_value(var_grads, -10, 10)
         self.optimizer.apply_gradients(zip(var_grads, self.trainable_variables))
 
-        return loss
+        mean_loss = loss / len(inputs)
+
+        if self.summarize:
+            self.__summarize_graph(loss=mean_loss)
+
+        return mean_loss
+
+    def sleep(self):
+        ############################################
+        # Reconnect All the Weakest connections;   #
+        # Essentially destroying them and creating #
+        # new ones.                                #
+        ############################################
+
+        abs_con = list(map(lambda con: float(tf.abs(con)), self.trainable_variables))
+        var_str = list(zip(abs_con, self.trainable_variables))
+        var_str.sort(key=lambda x: x[0])
+
+        reconnections = int(self.sleep_update * len(self.trainable_variables))
+        reconnected   = 0
+
+        for _, variable in var_str:
+            if reconnected >= reconnections:
+                break
+
+            node, id = variable.name.split("/")[0:2]
+
+            """I don't want to mix with the bias variables."""
+            if id == "bias":
+                continue
+
+            self.nodes[int(node)].reconnect(variable)
+            reconnected += 1
+
+        if self.visualize:
+            self.draw()
+
+        return None
 
 
 
 if __name__ == "__main__":
     tf.enable_eager_execution()
     g = Graph( 5, 5
-             , size=50
-             , surges=4)
+             , size=100
+             , surges=5)
 
-    inputs  = np.array([1, 2, 3, 4, 5], dtype=np.float32)
-    outputs = np.array([1, 0, -1, -2, -3], dtype=np.float32)
+    # g.sleep()
+    # inputs  = np.array([1, 2, 3, 4, 5], dtype=np.float32)
+    # outputs = np.array([1, 4, 6, 8, 10], dtype=np.float32)
 
-    for _ in range(100):
-        print("Loss", g.train_single(inputs, outputs))
+    # inputs  = np.array([inputs, inputs, inputs])
+    # outputs = np.array([outputs, outputs, outputs])
 
+    # for _ in range(10):
+        # g.train(inputs, outputs)
 
-    # ts = time.time()
-    # print(g(inputs))
-    # print(time.time() - ts)
+    time.sleep(10)
 
-    # print(len(g.trainable_variables))
+    # print(g.predict(inputs))
+
 

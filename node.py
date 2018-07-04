@@ -9,7 +9,7 @@ def trainable_variable(shape):
 
 class Node(object):
 
-    def __init__(self, key, graph, cardinality, activation=tf.nn.tanh, initial=0.0):
+    def __init__(self, key, graph, cardinality, activation=tf.nn.relu, initial=0.0):
 
         #####################################################
         # Key: Unique Identifier for this node              #
@@ -63,15 +63,17 @@ class Node(object):
         self.connections[variable] = new_con
 
     def surge(self, value):
-        self.activity = self.activity + value - self.bias
+        self.activity = self.activation(self.activity + value - self.bias)
+
+    def set(self, value):
+        self.activity = value
 
     def cool(self):
         self.activity = self.initial
 
     def __call__(self):
         for weigth, connection in self.connections.items():
-            activity = self.activation(tf.multiply(self.activity, weigth))
-            connection.surge(activity)
+            connection.surge(tf.multiply(self.activity, weigth))
 
 
 
