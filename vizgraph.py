@@ -11,15 +11,19 @@ class VizGraph(object):
                 , nodes
                 , input_nodes
                 , output_nodes
-                , default_node_sz=300):
+                , default_node_sz=50):
         self.tvs = trainable_variables
         self.nod = nodes
         self.ino = input_nodes
         self.ono = output_nodes
         self.dns = default_node_sz
 
+        self.layout = None
+
     def draw(self):
         graph = nx.MultiGraph()
+
+        plt.clf()
 
         node_colors = []
         node_sizes   = []
@@ -55,7 +59,11 @@ class VizGraph(object):
         node_sizes = node_sizes / np.mean(node_sizes)
         node_sizes = node_sizes * self.dns
 
+        if self.layout is None:
+            self.layout = nx.drawing.layout.random_layout(graph)
+
         nx.draw( graph
+               , pos=self.layout
                , node_size=node_sizes
                , node_color=node_colors
                , edge_color=edge_colors
@@ -63,5 +71,6 @@ class VizGraph(object):
                , edge_vmax=1
                , alpha=0.8
                , edge_cmap=plt.get_cmap("seismic"))
+
         plt.pause(0.0001)
 

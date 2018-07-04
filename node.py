@@ -27,7 +27,6 @@ class Node(object):
         self.graph       = graph
         self.cardinality = cardinality
         self.activity    = tf.constant([initial], dtype=tf.float32)
-        self.initial     = tf.constant([initial], dtype=tf.float32)
         self.activation  = activation
 
         self.connections = {}
@@ -63,17 +62,16 @@ class Node(object):
         self.connections[variable] = new_con
 
     def surge(self, value):
-        self.activity = self.activation(self.activity + value - self.bias)
+        self.activity = self.activity + value
 
     def set(self, value):
+        """https://stackoverflow.com/questions/12543837/python-iterating-over-list-vs-over-dict-items-efficiency"""
+        self.view_cache = list(self.connections.items())
         self.activity = value
 
-    def cool(self):
-        self.activity = self.initial
-
     def __call__(self):
-        for weigth, connection in self.connections.items():
-            connection.surge(tf.multiply(self.activity, weigth))
+        for weigth, connection in self.view_cache:
+            connection.surge(self.activation(tf.multiply(self.activity, weigth) + self.bias))
 
 
 

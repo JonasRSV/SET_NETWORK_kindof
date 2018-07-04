@@ -2,6 +2,7 @@ import numpy as np
 import tensorflow as tf
 import tensorflow.contrib.eager as tfe
 import time
+import sys
 from node import Node
 from vizgraph import VizGraph
 
@@ -14,7 +15,7 @@ class Graph(VizGraph):
                 , size=10
                 , sleep_update=0.1
                 , surges=10
-                , c_dist=lambda: np.random.normal(8, 2)
+                , c_dist=lambda: np.random.normal(loc=8, scale=2)
                 , activation=tf.nn.relu
                 , output_activation=tf.nn.relu 
                 , initializer=lambda: 0
@@ -22,9 +23,9 @@ class Graph(VizGraph):
                 , optimizer=tf.train.GradientDescentOptimizer(0.01)
                 , logdir="./summaries"
                 , summarize=True
-                , visualize=True):
+                , visualize=True
+                , default_node_sz=50):
         
-
         ####################################################################
         # Inputs: number of input nodes in the graph                       #
         # Outputs: number of output nodes in the graph                     #
@@ -50,14 +51,18 @@ class Graph(VizGraph):
         self.surges       = surges
         self.cd           = c_dist
         self.activation   = activation
+        self.o_activation = output_activation
         self.initializer  = initializer
         self.loss         = loss
         self.optimizer    = optimizer
 
+        ###########################################
+        # Connections that does not affect output #
+        ###########################################
+        self.dead_cons    = set()
+
         #################
-        #               #
         # For Summaries #
-        #               #
         #################
 
         self.summarize   = summarize
@@ -67,9 +72,7 @@ class Graph(VizGraph):
         self.global_step = tf.train.get_or_create_global_step()
 
         ###################
-        #                 #
         # Store the Graph #
-        #                 #
         ###################
         self.nodes               = [None] * self.size
         self.trainable_variables = []
@@ -82,7 +85,8 @@ class Graph(VizGraph):
                              , self.trainable_variables
                              , self.nodes
                              , self.input_nodes
-                             , self.output_nodes)
+                             , self.output_nodes
+                             , default_node_sz=default_node_sz)
 
             self.draw()
 
@@ -106,6 +110,7 @@ class Graph(VizGraph):
     def __initialize(self):
         for i in range(self.size):
             c             = int(abs(self.cd()))
+            c             = c if c != 0 else 1
             self.nodes[i] = Node( i
                                 , self
                                 , c
@@ -146,7 +151,6 @@ class Graph(VizGraph):
                 np.array([self.initializer()] * batch_dim), 
                     dtype=tf.float32))
 
-
         ####################
         # Vectorize Inputs #
         ####################
@@ -157,16 +161,16 @@ class Graph(VizGraph):
                 .set(tf.constant(vector[i], dtype=tf.float32))
 
 
+        #################
+        # BOTTLENECK 1 #
+        #################
+        # timestamp = time.time()
         for _ in range(self.surges):
             for node in self.nodes:
                 node()
+        # print("Surge {}".format(time.time() - timestamp))
 
-        output = list(
-                    map(lambda node: self.output_activation(node.activity)
-                        , self.output_nodes))
-
-        for node in self.nodes:
-            node.cool()
+        output = list(map(lambda node: node.activity, self.output_nodes))
 
         return output
 
@@ -184,22 +188,44 @@ class Graph(VizGraph):
         assert 2 == len(inputs.shape)
         assert 2 == len(labels.shape)
 
-        with tfe.GradientTape(persistent=True) as gradients:
+        with tfe.GradientTape() as gradients:
             """Surge through network."""
+            # timestamp = time.time()
             outputs = self.__predict(inputs)
+            # print("Prediction Took {}".format(time.time() - timestamp))
+
+            # timestamp = time.time()
             outputs = tf.stack(outputs)
-            outputs = tf.transpose(outputs)
+            outputs = self.o_activation(tf.transpose(outputs))
             loss = self.loss(labels, outputs)
+            # print("Calculating Loss {}".format(time.time() - timestamp))
 
+        # timestamp = time.time()
+
+        #################
+        # BOTTLENECK 2 #
+        #################
         var_grads = gradients.gradient(loss, self.trainable_variables)
+        # print("Calculating Gradients took {}".format(time.time() - timestamp))
 
+        # timestamp = time.time()
         """None Gradients, I assume they did not affect outcome at all."""
-        var_grads = [grad if grad is not None else tf.constant([0], dtype=tf.float32)
-                        for grad in var_grads]
+        for index, grad in enumerate(var_grads):
+            if grad is None:
+                var_grads[index] = tf.constant([0], dtype=tf.float32)
+                self.dead_cons.add(index)
+        # print("Filtering Gradients {}".format(time.time() - timestamp))
 
         """Avoid Exploding Gradients."""
         var_grads = tf.clip_by_value(var_grads, -10, 10)
+
+        # timestamp = time.time()
+
+        ###################################################
+        # BOTTLENECK 3 IF using wierd optimizer like Adam #
+        ###################################################
         self.optimizer.apply_gradients(zip(var_grads, self.trainable_variables))
+        # print("Applying Gradients took {}".format(time.time() - timestamp))
 
         mean_loss = loss / len(inputs)
 
@@ -209,6 +235,23 @@ class Graph(VizGraph):
         return mean_loss
 
     def sleep(self):
+
+        ###################################
+        # Reconnect all dead connections. #
+        ###################################
+
+        for vari in self.dead_cons:
+            variable = self.trainable_variables[vari]
+            node, id = variable.name.split("/")[0:2]
+
+            """I don't want to mix with the bias variables."""
+            if id == "bias":
+                continue
+
+            self.nodes[int(node)].reconnect(variable)
+
+        self.dead_cons.clear()
+
         ############################################
         # Reconnect All the Weakest connections;   #
         # Essentially destroying them and creating #
@@ -248,7 +291,9 @@ if __name__ == "__main__":
              , size=100
              , surges=5)
 
-    # g.sleep()
+
+    time.sleep(5)
+    g.sleep()
     # inputs  = np.array([1, 2, 3, 4, 5], dtype=np.float32)
     # outputs = np.array([1, 4, 6, 8, 10], dtype=np.float32)
 
@@ -257,6 +302,7 @@ if __name__ == "__main__":
 
     # for _ in range(10):
         # g.train(inputs, outputs)
+
 
     time.sleep(10)
 
