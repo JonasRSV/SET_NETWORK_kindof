@@ -4,10 +4,10 @@
 This that idea, trying to make some kind of dynamic graphlike neural network.
 
 > Example of Graph at start
-![https://imgur.com/a/e7GdHOY](Image1)
+![Image1](https://imgur.com/a/e7GdHOY)
 
 > Example After 1 training Epoch
-![https://imgur.com/a/96QsxJR](Image2)
+![Image2](https://imgur.com/a/96QsxJR)
 
 
 The dynamic part comes from it changeing connections according to some rule.
