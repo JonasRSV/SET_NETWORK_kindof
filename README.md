@@ -4,9 +4,11 @@
 This that idea, trying to make some kind of dynamic graphlike neural network.
 
 > Example of Graph at start
+
 ![Image1](https://imgur.com/a/e7GdHOY)
 
 > Example After 1 training Epoch
+
 ![Image2](https://imgur.com/a/96QsxJR)
 
 
