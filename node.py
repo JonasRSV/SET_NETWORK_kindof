@@ -50,7 +50,6 @@ class Node(object):
         self.graph.trainable_variables.extend(self.trainable_variables)
 
     def reconnect(self, variable):
-
         if variable not in self.connections:
             raise Exception(  "Tried to reconnect variable from node it was "
                             + "Not connected to; Variable {}, Node {} contains {}"

@@ -92,7 +92,6 @@ class Graph(VizGraph):
 
     def __summarize_graph(self, **kwargs):
         with tf.contrib.summary.record_summaries_every_n_global_steps(1):
-
             ######################################
             #            Wierd Bug!              #
             # Adding Summary Once Does not Work  #
@@ -100,10 +99,10 @@ class Graph(VizGraph):
             ######################################
             for _ in range(2):
                 tf.contrib.summary.scalar("loss", kwargs["loss"])
-
-            # for variable in self.trainable_variables:
-                # tf.contrib.summary.scalar(str(kwargs["loss"]), kwargs["loss"])
-                # tf.contrib.summary.scalar(name, variable)
+            
+            for variable in self.trainable_variables:
+                name = "/".join(variable.name.split("/")[0:2])
+                tf.contrib.summary.scalar(name, variable)
 
         self.global_step.assign_add(1)
 
@@ -168,6 +167,11 @@ class Graph(VizGraph):
         for _ in range(self.surges):
             for node in self.nodes:
                 node()
+
+            for node in reversed(self.nodes):
+                node()
+
+
         # print("Surge {}".format(time.time() - timestamp))
 
         output = list(map(lambda node: node.activity, self.output_nodes))
@@ -208,18 +212,24 @@ class Graph(VizGraph):
         var_grads = gradients.gradient(loss, self.trainable_variables)
         # print("Calculating Gradients took {}".format(time.time() - timestamp))
 
+
         # timestamp = time.time()
         """None Gradients, I assume they did not affect outcome at all."""
         for index, grad in enumerate(var_grads):
             if grad is None:
                 var_grads[index] = tf.constant([0], dtype=tf.float32)
-                self.dead_cons.add(index)
+                # self.dead_cons.add(index)
         # print("Filtering Gradients {}".format(time.time() - timestamp))
+
+
+
 
         """Avoid Exploding Gradients."""
         var_grads = tf.clip_by_value(var_grads, -10, 10)
 
         # timestamp = time.time()
+
+        # print(var_grads)
 
         ###################################################
         # BOTTLENECK 3 IF using wierd optimizer like Adam #
@@ -228,7 +238,6 @@ class Graph(VizGraph):
         # print("Applying Gradients took {}".format(time.time() - timestamp))
 
         mean_loss = loss / len(inputs)
-
         if self.summarize:
             self.__summarize_graph(loss=mean_loss)
 
@@ -275,6 +284,7 @@ class Graph(VizGraph):
             if id == "bias":
                 continue
 
+            # print(variable)
             self.nodes[int(node)].reconnect(variable)
             reconnected += 1
 
